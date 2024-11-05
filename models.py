@@ -219,7 +219,7 @@ def validation_stage(model, dataloader):
         else:
             input_x = data.x
         input_emb = model(input_x, data.edge_index)
-        vali_loss, _, _ = loss_fn(model, input_emb, data)
+        vali_loss, _ = loss_fn(model, input_emb, data)
         running_vloss += vali_loss.item()
 
     return running_vloss
