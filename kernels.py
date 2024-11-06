@@ -6,6 +6,7 @@ from utils import loadDS, get_graph_idx, eva_clustering, eva_svc
 from tqdm import tqdm
 from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
+import yaml
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -20,6 +21,14 @@ def MMDGK(args):
     model = GCNConvVanilla()
     timestamp = datetime.now().strftime("Y%m%d_%H%M%S")
     writer = SummaryWriter('runs_vanilla/{}_trainer_{}'.format(args.dataname, timestamp))
+
+    # Save param_dict as a YAML file in the run directory
+    run_dir = 'runs_vanilla/{}_trainer_{}'.format(args.dataname, timestamp)
+    if not os.path.exists(run_dir):
+        os.makedirs(run_dir)
+    param_file = os.path.join(run_dir, 'params.yaml')
+    with open(param_file, 'w') as file:
+        yaml.dump(param_dict, file)
 
     mmd_kernel_list = []
     for data in train_loader:
@@ -101,6 +110,14 @@ def deep_MMDGK(args):
                                 weight_decay=args.weight_decay)
     timestamp = datetime.now().strftime("Y%m%d_%H%M%S")
     writer = SummaryWriter('runs/{}_trainer_{}'.format(args.dataname, timestamp))
+
+    # Save param_dict as a YAML file in the run directory
+    run_dir = 'runs/{}_trainer_{}'.format(args.dataname, timestamp)
+    if not os.path.exists(run_dir):
+        os.makedirs(run_dir)
+    param_file = os.path.join(run_dir, 'params.yaml')
+    with open(param_file, 'w') as file:
+        yaml.dump(param_dict, file)
 
     print('============== Training ==============')
     best_vloss = 1_000_000.
