@@ -148,3 +148,10 @@ dmypy.json
 *.snm
 *.vrb
 *.pyg
+
+
+# Tensorboard logs
+runs/
+
+# Weights
+history/
