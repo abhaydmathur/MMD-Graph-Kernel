@@ -19,7 +19,7 @@ def arg_parse():
     parser.add_argument('--step_size', '-lr', type=float, default=1e-1, help='learning rate')
     parser.add_argument('--weight_decay', '-wd', type=float, default=0., help='weight decay')
     parser.add_argument('--max_norm', '-mn', type=float, default=1e-4, help='max norm')
-    parser.add_argument('--epochs', '-epochs', type=int, default=1, help='Number of epochs')
+    parser.add_argument('--epochs', '-epochs', type=int, default=10, help='Number of epochs')
 
     args = parser.parse_args()
     return args
