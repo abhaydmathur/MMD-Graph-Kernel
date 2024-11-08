@@ -5,12 +5,12 @@ from torch_geometric.utils import add_self_loops, degree
 from loss import loss_fn, get_graph_metric, get_one_graph_emb
 from utils import get_graph_idx, eva_clustering, eva_svc, train_test_svc
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class GCNConvVanilla(MessagePassing):
     def __init__(self):
-        super().__init__(aggr='add')  # "Add" aggregation (Step 5).
+        super().__init__(aggr="add")  # "Add" aggregation (Step 5).
 
     def forward(self, x, edge_index):
         # x has shape [N, in_channels]
@@ -23,14 +23,36 @@ class GCNConvVanilla(MessagePassing):
         row, col = edge_index
         deg = degree(col, x.size(0), dtype=x.dtype)
         deg_inv_sqrt = deg.pow(-0.5)
-        deg_inv_sqrt[deg_inv_sqrt == float('inf')] = 0
+        deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
         norm = deg_inv_sqrt[row] * deg_inv_sqrt[col]
 
         # Step 3-4: Start propagating messages.
         out = self.propagate(edge_index, x=x, norm=norm)
 
         return out
-    
+
+
+class GCNConvVanillaWithEdgeAttr(MessagePassing):
+    def __init__(self):
+        super().__init__(aggr="add")  # "Add" aggregation (Step ?)
+
+    def forward(self, x, edge_index, edge_attr):
+        """
+        - x == node_attr : [N, in_channels]
+        - edge_attr : [E, edge_dim]
+        """
+        edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))
+        row, col = edge_index
+        deg = degree(col, x.size(0), dtype=x.dtype)
+        deg_inv_sqrt = deg.pow(-0.5)
+        deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
+        norm = deg_inv_sqrt[row] * deg_inv_sqrt[col]
+        out = self.propagate(edge_index, x=x, edge_attr=edge_attr, norm=norm)
+        return out
+
+    def message(self, x_j, edge_attr, norm):
+        return norm.view(-1, 1) * (x_j + edge_attr)
+
 
 class NodeNorm(torch.nn.Module):
     def __init__(self, nn_type="n", unbiased=False, eps=1e-5, power_root=2):
@@ -102,7 +124,7 @@ def get_normalization(norm_type, num_channels=None):
 
 class GCNConv(MessagePassing):
     def __init__(self, in_channels=None, out_channels=None):
-        super().__init__(aggr='add')  # "Add" aggregation (Step 5).
+        super().__init__(aggr="add")  # "Add" aggregation (Step 5).
         self.lin = Linear(in_channels, out_channels, bias=False)
         self.bias = Parameter(torch.Tensor(out_channels))
         self.reset_parameters()
@@ -118,14 +140,14 @@ class GCNConv(MessagePassing):
         # Step 1: Add self-loops to the adjacency matrix.
         edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))
 
-        # Step 2: Linearly transform node feature matrix. 
+        # Step 2: Linearly transform node feature matrix.
         x = self.lin(x)
 
         # Step 3: Compute normalization.
         row, col = edge_index
         deg = degree(col, x.size(0), dtype=x.dtype)
         deg_inv_sqrt = deg.pow(-0.5)
-        deg_inv_sqrt[deg_inv_sqrt == float('inf')] = 0
+        deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
         norm = deg_inv_sqrt[row] * deg_inv_sqrt[col]
 
         # Step 4-5: Start propagating messages.
@@ -138,9 +160,18 @@ class GCNConv(MessagePassing):
 
 
 class MMD_GCN(torch.nn.Module):
-    def __init__(self, gcn_input_dim, gcn_num_layers, dis_gamma, bandwidth, \
-                alpha=1, normalization='node_m', encoder_equal_dim=True, \
-                objective_fuc='KL', only_node_attr=False):
+    def __init__(
+        self,
+        gcn_input_dim,
+        gcn_num_layers,
+        dis_gamma,
+        bandwidth,
+        alpha=1,
+        normalization="node_m",
+        encoder_equal_dim=True,
+        objective_fuc="KL",
+        only_node_attr=False,
+    ):
         super().__init__()
         self.gcn_num_layers = gcn_num_layers
         self.dis_gamma = dis_gamma
@@ -152,9 +183,14 @@ class MMD_GCN(torch.nn.Module):
         if type(encoder_equal_dim) == list:
             dim_list = encoder_equal_dim
         else:
-            dim_list = [gcn_input_dim for _ in range(gcn_num_layers+1)]
+            dim_list = [gcn_input_dim for _ in range(gcn_num_layers + 1)]
 
-        self.gcn_list = ModuleList([GCNConv(dim_list[i], dim_list[i+1]).cuda() for i in range(gcn_num_layers)])
+        self.gcn_list = ModuleList(
+            [
+                GCNConv(dim_list[i], dim_list[i + 1]).cuda()
+                for i in range(gcn_num_layers)
+            ]
+        )
         if normalization is not None:
             self.normalization = True
             self.bns = ModuleList([torch.nn.BatchNorm1d(dim) for dim in dim_list[1:]])
@@ -165,7 +201,86 @@ class MMD_GCN(torch.nn.Module):
     def forward(self, x, edge_index):
         for layer in range(self.gcn_num_layers):
             x = self.gcn_list[layer](x, edge_index)
-            
+
+            if self.normalization:
+                x = self.node_norm(x)
+                x = self.bns[layer](x)
+        return x
+
+
+class GCNConvWithEdgeAttr(MessagePassing):
+    def __init__(self):
+        super().__init__(aggr="add")  # "Add" aggregation
+
+    def forward(self, x, edge_index, edge_attr):
+        """
+        x : [N, in_channels] - Node features
+        edge_index : [2, E] - Graph connectivity
+        edge_attr : [E, edge_dim] - Edge features
+        """
+        # Add self-loops to the adjacency matrix
+        edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))
+
+        # Compute normalization
+        row, col = edge_index
+        deg = degree(col, x.size(0), dtype=x.dtype)
+        deg_inv_sqrt = deg.pow(-0.5)
+        deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
+        norm = deg_inv_sqrt[row] * deg_inv_sqrt[col]
+
+        # Propagate messages
+        out = self.propagate(edge_index, x=x, edge_attr=edge_attr, norm=norm)
+        return out
+
+    def message(self, x_j, edge_attr, norm):
+        # Compute messages
+        return norm.view(-1, 1) * (x_j + edge_attr)
+
+
+class MMD_GCNWithEdgeAttr(torch.nn.Module):
+    def __init__(
+        self,
+        gcn_input_dim,
+        gcn_num_layers,
+        edge_dim,
+        dis_gamma,
+        bandwidth,
+        alpha=1,
+        normalization="node_m",
+        encoder_equal_dim=True,
+        objective_fuc="KL",
+        only_node_attr=False,
+    ):
+        super().__init__()
+        self.gcn_num_layers = gcn_num_layers
+        self.dis_gamma = dis_gamma
+        self.bandwidth = bandwidth
+        self.alpha = alpha
+        self.objective_fuc = objective_fuc
+        self.only_node_attr = only_node_attr
+
+        if type(encoder_equal_dim) == list:
+            dim_list = encoder_equal_dim
+        else:
+            dim_list = [gcn_input_dim for _ in range(gcn_num_layers + 1)]
+
+        self.gcn_list = ModuleList(
+            [
+                GCNConvWithEdgeAttr(dim_list[i], dim_list[i + 1], edge_dim).cuda()
+                for i in range(gcn_num_layers)
+            ]
+        )
+        if normalization is not None:
+            self.normalization = True
+            self.bns = ModuleList([torch.nn.BatchNorm1d(dim) for dim in dim_list[1:]])
+            self.node_norm = get_normalization(norm_type=normalization)
+        else:
+            self.normalization = False
+
+    def forward(self, x, edge_index, edge_attr):
+        for layer in range(self.gcn_num_layers):
+            x = self.gcn_list[layer](x, edge_index, edge_attr)
+
             if self.normalization:
                 x = self.node_norm(x)
                 x = self.bns[layer](x)
@@ -183,15 +298,15 @@ def get_pairwise_simi(model, g1, edge_index1, g2, edge_index2):
 
 def train_one_epoch(model, optimizer, dataloader, max_norm):
 
-    running_loss = 0.
+    running_loss = 0.0
     mmd_kernel_list = []
     for data in dataloader:
 
         data = data.to(device)
         if model.only_node_attr:
-            input_x = data.node_attr    # option 1 [only node attr]
+            input_x = data.node_attr  # option 1 [only node attr]
         else:
-            input_x = data.x            # option 2 [node attr; node label]
+            input_x = data.x  # option 2 [node attr; node label]
 
         # 1. Pass through encoder and get node emb
         input_emb = model(input_x, data.edge_index)
@@ -200,9 +315,12 @@ def train_one_epoch(model, optimizer, dataloader, max_norm):
         train_loss.backward()
         mmd_kernel_list.append(mmd_kernel.cpu().detach().numpy())
         # 3. Adjust learning weights
-        if max_norm is not None: torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm) # 3.1 Perform gradient clipping
+        if max_norm is not None:
+            torch.nn.utils.clip_grad_norm_(
+                model.parameters(), max_norm
+            )  # 3.1 Perform gradient clipping
         optimizer.step()
-        
+
         # 4. Gather data
         running_loss += train_loss.item()
 
@@ -238,13 +356,19 @@ def get_train_test_matrix(model, train_data, test_data):
     test_graph_idx = get_graph_idx(test_data)
     test_x = test_data.node_attr if model.only_node_attr else test_data.x
     test_emb = model(test_x, test_data.edge_index)
-    
-    test_mmd_kernel = torch.ones(test_num_graph, train_num_graph).cuda() # similarty
+
+    test_mmd_kernel = torch.ones(test_num_graph, train_num_graph).cuda()  # similarty
     for i in range(test_num_graph):
         for j in range(train_num_graph):
-            graph_i = get_one_graph_emb(test_emb, test_graph_idx[i], test_graph_idx[i+1])
-            graph_j = get_one_graph_emb(train_emb, train_graph_idx[j], train_graph_idx[j+1])
-            mmd_simi = get_graph_metric(graph_i, graph_j, model.bandwidth, model.dis_gamma)
+            graph_i = get_one_graph_emb(
+                test_emb, test_graph_idx[i], test_graph_idx[i + 1]
+            )
+            graph_j = get_one_graph_emb(
+                train_emb, train_graph_idx[j], train_graph_idx[j + 1]
+            )
+            mmd_simi = get_graph_metric(
+                graph_i, graph_j, model.bandwidth, model.dis_gamma
+            )
             test_mmd_kernel[i, j] = mmd_simi
 
     return test_mmd_kernel.cpu().data.numpy()
@@ -266,11 +390,15 @@ def test_stage(model, train_loader, test_data, mmd_kernel_list):
         else:
             # Evaluation 1: Spectral Clustering
             results_clu = eva_clustering(mmd_kernel, train_data.y.cpu().data.numpy())
-            
+
             test_mmd_kernel = get_train_test_matrix(model, train_data, test_data)
             # Evaluation 2: SVC
-            results_svc = train_test_svc(mmd_kernel, train_data.y.cpu().data.numpy(), \
-                                        test_mmd_kernel, test_data.y.cpu().data.numpy())
-            
+            results_svc = train_test_svc(
+                mmd_kernel,
+                train_data.y.cpu().data.numpy(),
+                test_mmd_kernel,
+                test_data.y.cpu().data.numpy(),
+            )
+
     results_clu.update(results_svc)
     return results_clu

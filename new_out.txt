@@ -1,0 +1,32 @@
+Model: vanilla, Dataset: Fingerprint, Only Node Attr: True
+random_ expects 'from' to be less than 'to', but got from=0 >= to=0
+Model: vanilla, Dataset: Fingerprint, Only Node Attr: False
+random_ expects 'from' to be less than 'to', but got from=0 >= to=0
+Model: vanilla, Dataset: BZR_MD, Only Node Attr: True
+Layer   2 | {'train_clu_acc': 0.5409836065573771, 'train_clu_nmi': 0.004244802974047382, 'train_clu_ari': 0.0034441787289456755, 'cv_svc_mean': 0.5204931972789116, 'cv_svc_std': 0
+Model: vanilla, Dataset: BZR_MD, Only Node Attr: False
+Layer   1 | {'train_clu_acc': 0.5040983606557377, 'train_clu_nmi': 0.0008338520423401269, 'train_clu_ari': -0.0043713070801384615, 'cv_svc_mean': 0.5243197278911564, 'cv_svc_std':
+
+
+
+
+
+Layer   2 | {'train_clu_acc': 0.5450819672131147, 'train_clu_nmi': 0.0027941480629906155, 'train_clu_ari': 0.003583116530847812, 'cv_svc_mean': 0.536904761904762, 'cv_svc_std': 0.
+Model: deep, Dataset: Fingerprint, Only Node Attr: True
+============== Training ==============
+  0%|                                                                                                                                                       | 0/10 [00:00<?, ?it/s]
+random_ expects 'from' to be less than 'to', but got from=0 >= to=0
+Model: deep, Dataset: Fingerprint, Only Node Attr: False
+random_ expects 'from' to be less than 'to', but got from=0 >= to=0
+Model: deep, Dataset: BZR_MD, Only Node Attr: True
+============== Training ==============
+  0%|                                                                                                                                                       | 0/10 [00:00<?, ?it/s]
+
+
+
+
+
+Epoch  10 | {'train_clu_acc': 0.5081967213114754, 'train_clu_nmi': 5.8383301454425434e-06, 'train_clu_ari': -0.0035789983448376514, 'train_svc_acc': 0.5204918032786885, 'test_svc_
+Model: deep, Dataset: BZR_MD, Only Node Attr: False
+============== Training ==============
+Epoch  10 | {'train_clu_acc': 0.5, 'train_clu_nmi': 0.00036190339061211666, 'train_clu_ari': -0.0032327457434341194, 'train_svc_acc': 1.0, 'test_svc_acc': 0.45161290322580644}: 10

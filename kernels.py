@@ -1,6 +1,13 @@
 import torch
 import os
-from models import GCNConvVanilla, MMD_GCN, train_one_epoch, validation_stage, test_stage
+from models import (
+    GCNConvVanilla,
+    MMD_GCN,
+    train_one_epoch,
+    validation_stage,
+    test_stage,
+)
+from models import GCNConvWithEdgeAttr
 from loss import get_graph_metric
 from utils import loadDS, get_graph_idx, eva_clustering, eva_svc
 from tqdm import tqdm
@@ -8,26 +15,37 @@ from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
 import yaml
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def MMDGK(args):
 
     param_dict = vars(args).copy()
-    param_dict['bandwidth'] = str(args.bandwidth)
+    param_dict["bandwidth"] = str(args.bandwidth)
 
-    dataloader, _, _ = loadDS(args.dataname, batch_size=-1, num_dataloader=3, random_seed=2023) # batch_size = -1 : all data in one batch
+    # loadDS returns (train_loader, val_loader, test_loader), dataset.num_features, dataset.num_node_attributes
+    dataloader, _, _ = loadDS(
+        args.dataname, batch_size=-1, num_dataloader=3, random_seed=2023
+    )  # batch_size = -1 : all data in one batch
     train_loader = dataloader[0]
-    model = GCNConvVanilla()
+    model = (
+        GCNConvVanilla()
+        if not param_dict["use_edge_attr"]
+        else GCNConvVanillaWithEdgeAttr()
+    )
     timestamp = datetime.now().strftime("Y%m%d_%H%M%S")
-    writer = SummaryWriter('runs_vanilla/{}_trainer_{}'.format(args.dataname, timestamp))
+    writer = SummaryWriter(
+        "runs_vanilla/{}_trainer_{}".format(args.dataname, timestamp)
+    )
 
     # Save param_dict as a YAML file in the run directory
-    run_dir = 'runs_vanilla/{}_trainer_{}'.format(args.dataname, timestamp)
+    run_dir = "runs_vanilla/{}_trainer_{}_{}".format(
+        args.dataname, timestamp, args.log_code
+    )
     if not os.path.exists(run_dir):
         os.makedirs(run_dir)
-    param_file = os.path.join(run_dir, 'params.yaml')
-    with open(param_file, 'w') as file:
+    param_file = os.path.join(run_dir, "params.yaml")
+    with open(param_file, "w") as file:
         yaml.dump(param_dict, file)
 
     mmd_kernel_list = []
@@ -38,23 +56,28 @@ def MMDGK(args):
         num_graph = len(data)
 
         if args.only_node_attr:
-            input_x = data.node_attr    # option 1 [only node attr]
+            input_x = data.node_attr  # option 1 [only node attr]
         else:
-            input_x = data.x            # option 2 [node attr; node label]
+            input_x = data.x  # option 2 [node attr; node label]
 
         pbar = tqdm(range(1, args.gcn_num_layer + 1))
         for layer in pbar:
             # 1. Pass through encoder and get node emb
-            input_x = model(input_x, data.edge_index)
+            if param_dict["use_edge_attr"]:
+                input_x = model(input_x, data.edge_index, data.edge_attr)
+            else:
+                input_x = model(input_x, data.edge_index)
             # 2. Get the graph index
             graph_idx = get_graph_idx(data)
             # 3. Build MMD graph kernel & Calculate loss
             mmd_kernel = torch.ones(num_graph, num_graph).cuda()
             for i in range(num_graph):
-                graph_i = input_x[graph_idx[i]:graph_idx[i+1]]
-                for j in range(i+1, num_graph):
-                    graph_j = input_x[graph_idx[j]:graph_idx[j+1]]
-                    mmd_simi = get_graph_metric(graph_i, graph_j, args.bandwidth, args.dis_gamma)
+                graph_i = input_x[graph_idx[i] : graph_idx[i + 1]]
+                for j in range(i + 1, num_graph):
+                    graph_j = input_x[graph_idx[j] : graph_idx[j + 1]]
+                    mmd_simi = get_graph_metric(
+                        graph_i, graph_j, args.bandwidth, args.dis_gamma
+                    )
                     mmd_kernel[i, j] = mmd_kernel[j, i] = mmd_simi
 
             # 4. Evaluate the graph kernel by graph classification accuracy & spectral clustering
@@ -65,97 +88,117 @@ def MMDGK(args):
             # 4.2: SVC
             results_svc = eva_svc(mmd_kernel, label)
             results.update(results_svc)
-            
-            writer.add_scalars('Scores', results, layer)
-            pbar.set_description(f'Layer {layer:>3} | {results}')
+
+            writer.add_scalars("Scores", results, layer)
+            pbar.set_description(f"Layer {layer:>3} | {results}")
             writer.flush()
 
     writer.add_hparams(param_dict, results)
-    writer.close() 
+    writer.close()
 
-    if len(mmd_kernel_list) == 1: # batch_size==-1
+    if len(mmd_kernel_list) == 1:  # batch_size==-1
         return mmd_kernel_list[0]
     else:
         return mmd_kernel_list
-    
 
 
 def deep_MMDGK(args):
 
     param_dict = vars(args).copy()
-    param_dict['bandwidth'] = str(args.bandwidth)
-    dataloader, num_features, num_node_attributes = loadDS(args.dataname, batch_size=-1, num_dataloader=3, random_seed=2023) # batch_size = -1 : all data in one batch
-    
-    if len(dataloader) == 3: 
+    param_dict["bandwidth"] = str(args.bandwidth)
+    dataloader, num_features, num_node_attributes = loadDS(
+        args.dataname, batch_size=-1, num_dataloader=3, random_seed=2023
+    )  # batch_size = -1 : all data in one batch
+
+    if len(dataloader) == 3:
         train_loader = dataloader[0]
         validation_loader = dataloader[1]
         test_loader = dataloader[2]
     elif len(dataloader) == 2:
         train_loader = dataloader[0]
-        validation_loader = None 
+        validation_loader = None
         test_loader = dataloader[1]
     else:
         train_loader = dataloader[0]
         validation_loader = None
         test_loader = None
-    
+
     # select dimensions of layers
     gcn_input_dim = num_node_attributes if args.only_node_attr else num_features
     # initial GCN model and optimizer
-    model = MMD_GCN(gcn_input_dim, args.gcn_num_layer, args.dis_gamma, args.bandwidth,\
-                    args.alpha, args.normalization, args.encoder_equal_dim, \
-                    args.objective_fuc, args.only_node_attr).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), \
-                                lr=args.step_size,        \
-                                weight_decay=args.weight_decay)
+    model = MMD_GCN(
+        gcn_input_dim,
+        args.gcn_num_layer,
+        args.dis_gamma,
+        args.bandwidth,
+        args.alpha,
+        args.normalization,
+        args.encoder_equal_dim,
+        args.objective_fuc,
+        args.only_node_attr,
+    ).to(device)
+    optimizer = torch.optim.Adam(
+        model.parameters(), lr=args.step_size, weight_decay=args.weight_decay
+    )
     timestamp = datetime.now().strftime("Y%m%d_%H%M%S")
-    writer = SummaryWriter('runs/{}_trainer_{}'.format(args.dataname, timestamp))
+    writer = SummaryWriter(
+        "runs/{}_trainer_{}_{}".format(args.dataname, timestamp, args.log_code)
+    )
 
     # Save param_dict as a YAML file in the run directory
-    run_dir = 'runs/{}_trainer_{}'.format(args.dataname, timestamp)
+    run_dir = "runs/{}_trainer_{}".format(args.dataname, timestamp)
     if not os.path.exists(run_dir):
         os.makedirs(run_dir)
-    param_file = os.path.join(run_dir, 'params.yaml')
-    with open(param_file, 'w') as file:
+    param_file = os.path.join(run_dir, "params.yaml")
+    with open(param_file, "w") as file:
         yaml.dump(param_dict, file)
 
-    print('============== Training ==============')
-    best_vloss = 1_000_000.
+    print("============== Training ==============")
+    best_vloss = 1_000_000.0
     pbar = tqdm(range(1, args.epochs + 1))
     for epoch in pbar:
         model.train()
-        tloss, mmd_kernel_list = train_one_epoch(model, optimizer, train_loader, args.max_norm)
-        
+        tloss, mmd_kernel_list = train_one_epoch(
+            model, optimizer, train_loader, args.max_norm
+        )
+
         model.eval()
         if validation_loader is not None:
             vloss = validation_stage(model, validation_loader)
-            pbar.set_description(f'Epoch {epoch:>3} | Train Loss: {tloss:.4f} | Validation Loss: {vloss:.4f}')
-            writer.add_scalars('Training vs. Validation Loss',
-                         {'Training' : tloss, 'Validation' : vloss},
-                         epoch)
+            pbar.set_description(
+                f"Epoch {epoch:>3} | Train Loss: {tloss:.4f} | Validation Loss: {vloss:.4f}"
+            )
+            writer.add_scalars(
+                "Training vs. Validation Loss",
+                {"Training": tloss, "Validation": vloss},
+                epoch,
+            )
         else:
-            vloss = 1_000_000.
-            pbar.set_description(f'Epoch {epoch:>3} | Train Loss: {tloss:.4f}')
-            writer.add_scalars('Training Loss', {'Training' : tloss}, epoch)
+            vloss = 1_000_000.0
+            pbar.set_description(f"Epoch {epoch:>3} | Train Loss: {tloss:.4f}")
+            writer.add_scalars("Training Loss", {"Training": tloss}, epoch)
 
-        assert(len(test_loader)==1)
+        assert len(test_loader) == 1
         for test_data in test_loader:
             test_results = test_stage(model, train_loader, test_data, mmd_kernel_list)
-            pbar.set_description(f'Epoch {epoch:>3} | {test_results}')
-            writer.add_scalars('Scores', test_results, epoch)
+            pbar.set_description(f"Epoch {epoch:>3} | {test_results}")
+            writer.add_scalars("Scores", test_results, epoch)
             writer.flush()
 
         # Track best performance, and save the model's state
-        if (vloss < best_vloss) | (epoch==args.epochs):
+        if (vloss < best_vloss) | (epoch == args.epochs):
             best_vloss = vloss
-            if not os.path.isdir('./history/'): os.mkdir('./history/')
-            model_path = './history/model_{}_{}_{}'.format(args.dataname, timestamp, epoch)
+            if not os.path.isdir("./history/"):
+                os.mkdir("./history/")
+            model_path = "./history/model_{}_{}_{}".format(
+                args.dataname, timestamp, epoch
+            )
             torch.save(model.state_dict(), model_path)
 
     writer.add_hparams(param_dict, test_results)
     writer.close()
 
-    if len(mmd_kernel_list) == 1: # batch_size==-1
+    if len(mmd_kernel_list) == 1:  # batch_size==-1
         return mmd_kernel_list[0]
     else:
         return mmd_kernel_list
