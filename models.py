@@ -209,8 +209,15 @@ class MMD_GCN(torch.nn.Module):
 
 
 class GCNConvWithEdgeAttr(MessagePassing):
-    def __init__(self):
+    def __init__(self, in_channels, out_channels, edge_dim):
         super().__init__(aggr="add")  # "Add" aggregation
+        self.lin = Linear(in_channels + edge_dim, out_channels, bias=False)
+        self.bias = Parameter(torch.Tensor(out_channels))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        self.lin.reset_parameters()
+        self.bias.data.zero_()
 
     def forward(self, x, edge_index, edge_attr):
         """
@@ -230,11 +237,12 @@ class GCNConvWithEdgeAttr(MessagePassing):
 
         # Propagate messages
         out = self.propagate(edge_index, x=x, edge_attr=edge_attr, norm=norm)
+        out += self.bias
         return out
 
     def message(self, x_j, edge_attr, norm):
         # Compute messages
-        return norm.view(-1, 1) * (x_j + edge_attr)
+        return norm.view(-1, 1) * self.lin(torch.cat([x_j, edge_attr], dim=-1))
 
 
 class MMD_GCNWithEdgeAttr(torch.nn.Module):
@@ -296,7 +304,7 @@ def get_pairwise_simi(model, g1, edge_index1, g2, edge_index2):
     return mmd_simi, mmd_dis
 
 
-def train_one_epoch(model, optimizer, dataloader, max_norm):
+def train_one_epoch(model, optimizer, dataloader, max_norm, use_edge_attr=False):
 
     running_loss = 0.0
     mmd_kernel_list = []
@@ -309,7 +317,10 @@ def train_one_epoch(model, optimizer, dataloader, max_norm):
             input_x = data.x  # option 2 [node attr; node label]
 
         # 1. Pass through encoder and get node emb
-        input_emb = model(input_x, data.edge_index)
+        if use_edge_attr:
+            input_emb = model(input_x, data.edge_index, data.edge_attr)
+        else:
+            input_emb = model(input_x, data.edge_index)
         # 2. Calculate the loss, kernels and its gradients
         train_loss, mmd_kernel = loss_fn(model, input_emb, data)
         train_loss.backward()

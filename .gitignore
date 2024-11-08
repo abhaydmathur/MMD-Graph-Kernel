@@ -153,6 +153,7 @@ dmypy.json
 # Tensorboard logs
 runs/
 grid_runs/
+old_runs/ 
 
 # Weights
 history/

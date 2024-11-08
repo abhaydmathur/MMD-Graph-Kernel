@@ -4,13 +4,13 @@ import os
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
-# datasets = ["MUTAG", "BZR", "DHFR", "PROTEINS", "PTC_FM"] #, 'Fingerprint', 'BZR_MD']
-datasets = ["Fingerprint", "BZR_MD"]
+datasets = ["MUTAG", "BZR", "DHFR", "PROTEINS", "PTC_FM", 'Fingerprint', 'BZR_MD']
+# datasets = ["Fingerprint", "BZR_MD"]
 
 models = ["vanilla", "deep"]
 # models = ['deep']
 
-onas = [True, False]
+onas = [False]
 
 # dis_gammas = [1e-1, 1e0, 1e1]
 
@@ -21,6 +21,7 @@ onas = [True, False]
 if __name__ == "__main__":
 
     args = arg_parse()
+    args.use_edge_attr = True
 
     for m in models:
         args.model = m

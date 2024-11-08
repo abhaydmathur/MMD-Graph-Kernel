@@ -7,7 +7,7 @@ from models import (
     validation_stage,
     test_stage,
 )
-from models import GCNConvWithEdgeAttr
+from models import GCNConvVanillaWithEdgeAttr, MMD_GCNWithEdgeAttr
 from loss import get_graph_metric
 from utils import loadDS, get_graph_idx, eva_clustering, eva_svc
 from tqdm import tqdm
@@ -89,9 +89,11 @@ def MMDGK(args):
             results_svc = eva_svc(mmd_kernel, label)
             results.update(results_svc)
 
+
             writer.add_scalars("Scores", results, layer)
             pbar.set_description(f"Layer {layer:>3} | {results}")
             writer.flush()
+    print(results)
 
     writer.add_hparams(param_dict, results)
     writer.close()
@@ -126,17 +128,31 @@ def deep_MMDGK(args):
     # select dimensions of layers
     gcn_input_dim = num_node_attributes if args.only_node_attr else num_features
     # initial GCN model and optimizer
-    model = MMD_GCN(
-        gcn_input_dim,
-        args.gcn_num_layer,
-        args.dis_gamma,
-        args.bandwidth,
-        args.alpha,
-        args.normalization,
-        args.encoder_equal_dim,
-        args.objective_fuc,
-        args.only_node_attr,
-    ).to(device)
+    if not args.use_edge_attr:
+        model = MMD_GCN(
+            gcn_input_dim,
+            args.gcn_num_layer,
+            args.dis_gamma,
+            args.bandwidth,
+            args.alpha,
+            args.normalization,
+            args.encoder_equal_dim,
+            args.objective_fuc,
+            args.only_node_attr,
+        ).to(device)
+    else:
+        model = MMD_GCNWithEdgeAttr(
+            gcn_input_dim,
+            args.gcn_num_layer,
+            args.dis_gamma,
+            args.bandwidth,
+            args.alpha,
+            args.normalization,
+            args.encoder_equal_dim,
+            args.objective_fuc,
+            args.only_node_attr,
+        ).to(device)
+
     optimizer = torch.optim.Adam(
         model.parameters(), lr=args.step_size, weight_decay=args.weight_decay
     )
@@ -159,7 +175,7 @@ def deep_MMDGK(args):
     for epoch in pbar:
         model.train()
         tloss, mmd_kernel_list = train_one_epoch(
-            model, optimizer, train_loader, args.max_norm
+            model, optimizer, train_loader, args.max_norm, args.use_edge_attr
         )
 
         model.eval()
@@ -194,6 +210,8 @@ def deep_MMDGK(args):
                 args.dataname, timestamp, epoch
             )
             torch.save(model.state_dict(), model_path)
+
+    print(test_results)
 
     writer.add_hparams(param_dict, test_results)
     writer.close()
